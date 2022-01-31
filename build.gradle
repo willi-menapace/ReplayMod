@@ -340,6 +340,8 @@ dependencies {
     }
 
     testCompile 'junit:junit:4.11'
+
+    implementation 'org.json:json:20210307'
 }
 
 if (mcVersion <= 10710) {

@@ -21,19 +21,30 @@ import de.johni0702.minecraft.gui.utils.lwjgl.vector.Quaternion;
 import de.johni0702.minecraft.gui.utils.lwjgl.vector.Vector4f;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.util.math.Position;
 import org.apache.commons.io.FilenameUtils;
 import org.lwjgl.opengl.GL11;
+
+import static com.replaymod.render.ReplayModRender.LOGGER;
+
+import org.json.*;
 
 //#if MC>=11400
 import net.minecraft.util.math.Vec3d;
 //#else
 //#endif
 
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
+
+import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import static com.replaymod.core.utils.Utils.configure;
 
@@ -45,6 +56,8 @@ public class CameraPathExporter {
     private ByteBuffer timeBuffer;
     private ByteBuffer cameraTranslationBuffer;
     private ByteBuffer cameraRotationBuffer;
+
+    private AllTimestepInfo allTimestepInfo = new AllTimestepInfo();
 
     public CameraPathExporter(RenderSettings settings) {
         this.settings = settings;
@@ -85,6 +98,9 @@ public class CameraPathExporter {
         //#endif
         float roll = entity instanceof CameraEntity ? ((CameraEntity) entity).roll : 0;
 
+        // Gets the positional info for the camera
+        //PositionalInfo cameraInfo = new PositionalInfo(x, y, z, pitch, yaw, roll);
+
         Quaternion quatYaw = new Quaternion();
         Quaternion quatPitch = new Quaternion();
         Quaternion quatRoll = new Quaternion();
@@ -110,10 +126,116 @@ public class CameraPathExporter {
             cameraRotationBuffer.putFloat(f);
         }
 
+
+        // My Code ----------------------------------------------------------------------------------------------------------------------------
+
+        List<PlayerEntity> players = mc.world.getPlayers()
+                .stream()
+                .map(it -> (PlayerEntity) it)
+                .filter(it -> !(it instanceof CameraEntity))
+                .collect(Collectors.toList());
+        //#else
+        //$$ @SuppressWarnings("unchecked")
+        //#if MC>=10800
+        //$$ List<EntityPlayer> players = mod.getMinecraft().world.getPlayers(EntityPlayer.class, new Predicate() {
+        //$$     @Override
+        //$$     public boolean apply(Object input) {
+        //$$         return !(input instanceof CameraEntity); // Exclude the camera entity
+        //$$     }
+        //$$ });
+        //#else
+        //$$ List<EntityPlayer> players = mod.getMinecraft().theWorld.playerEntities;
+        //$$ players = players.stream()
+        //$$         .filter(it -> !(it instanceof CameraEntity)) // Exclude the camera entity
+        //$$         .collect(Collectors.toList());
+        //#endif
+        //#endif
+
+        // Hide all players that have an UUID v2 (commonly used for NPCs)
+        Iterator<PlayerEntity> iter = players.iterator();
+        while (iter.hasNext()) {
+            UUID uuid = iter.next().getGameProfile().getId();
+            if (uuid != null && uuid.version() == 2) {
+                iter.remove();
+            }
+        }
+
+        // Computes the positional info for each entity
+        MultiobjectPositionalInfo currentEntitiesInfo = new MultiobjectPositionalInfo();
+        for(PlayerEntity currentPlayer : players) {
+            float currentX = (float) currentPlayer.getX();
+            float currentY = (float) currentPlayer.getY();
+            float currentZ = (float) currentPlayer.getZ();
+
+            float currentRotX = (float) currentPlayer.getRotationVector().x;
+            float currentRotY = (float) currentPlayer.getRotationVector().y;
+            float currentRotZ = 0.0F;
+
+            UUID currentUUID = currentPlayer.getGameProfile().getId();
+
+            PlayerPositionalInfo currentPlayerInfo = new PlayerPositionalInfo(currentX, currentY, currentZ, currentRotX, currentRotY, currentRotZ, currentUUID);
+            currentEntitiesInfo.add(currentPlayerInfo);
+        }
+
+        // Adds to the complete time information
+        CurrentTimestepInfo currentTimestepInfo = new CurrentTimestepInfo(framesDone, cameraInfo, currentEntitiesInfo);
+        allTimestepInfo.add(currentTimestepInfo);
+
+        // My Code End ----------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
         framesDone++;
     }
 
     public void finish() throws IOException {
+
+        FileWriter file = null;
+        try {
+            // Gets the path where to save results
+            java.nio.file.Path videoPath = settings.getOutputFile().toPath();
+            java.nio.file.Path jsonBasePath = Files.isDirectory(videoPath)
+                    ? videoPath.resolve("metadata.json")
+                    : videoPath.resolveSibling(FilenameUtils.getBaseName(videoPath.getFileName().toString()) + ".json");
+            java.nio.file.Path jsonPath = jsonBasePath;
+            for (int i = 0; Files.exists(jsonPath); i++) {
+                String baseName = FilenameUtils.getBaseName(jsonBasePath.getFileName().toString());
+                jsonPath = jsonBasePath.resolveSibling(baseName + "." + i + ".json");
+            }
+
+            // Writes the file
+            file = new FileWriter(jsonPath.toFile());
+            file.write(allTimestepInfo.getJsonObject().toString());
+
+        } catch (IOException e) {
+            LOGGER.error("Erorr while saving JSON metadata file", e);
+        } finally {
+            try {
+                file.flush();
+                file.close();
+            } catch (IOException e) {
+                LOGGER.error("Erorr while saving JSON metadata file", e);
+            }
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         int timeBufferSize = timeBuffer.rewind().remaining();
         int cameraTranslationBufferSize = cameraTranslationBuffer.rewind().remaining();
         int cameraRotationBufferSize = cameraRotationBuffer.rewind().remaining();
